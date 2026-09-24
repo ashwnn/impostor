@@ -27,9 +27,9 @@ The server prints a link for every network interface:
   LAN:    http://192.168.1.5:8787
 ```
 
-Share the LAN link. First launch serves a fresh build; use `npm run dev` to rebuild and
-start in one step, or `npm run dev:ui` for a Vite dev server with hot reload (it proxies
-`/api` to `http://127.0.0.1:8787`).
+Share the LAN link. `npm start` always builds first, so a fresh clone works with the
+command above. For UI work, `npm run dev:ui` runs a Vite dev server with hot reload (it
+proxies `/api` to `http://127.0.0.1:8787`).
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -79,8 +79,7 @@ Limits: word 40 chars, hint 100, clue 1–3 words / 40 chars, name 32, bank ≤5
 
 ```bash
 npm run build      # typecheck + production build into dist/
-npm run dev        # build, then start the server
-npm start          # start the server (serves the last build)
+npm start          # build, then serve (also runs the frontend build first)
 npm run dev:ui     # Vite dev server for the UI, proxying /api to :8787
 npm test           # node:test suite (unit + HTTP integration)
 npm run lint       # ESLint with @shadcn/lint design-system rules
