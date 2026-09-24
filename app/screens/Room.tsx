@@ -322,7 +322,7 @@ export default function Room({ roomId }: { roomId: string }) {
           <button
             type="button"
             onClick={switchPlayer}
-            className="underline underline-offset-2 hover:text-ink-soft"
+            className="underline underline-offset-2 active:text-ink-text py-2"
           >
             Join as a different player
           </button>
@@ -655,7 +655,7 @@ function LobbyView({
                       "h-11 rounded-2xl border text-sm font-semibold px-2 " +
                       (shared.poolMode === value
                         ? "border-signal bg-signal-soft text-signal"
-                        : "border-ink-line bg-ink text-ink-soft hover:border-ink-soft/50")
+                        : "border-ink-line bg-ink text-ink-soft active:border-signal/40")
                     }
                   >
                     {label}
@@ -672,7 +672,7 @@ function LobbyView({
                   onChange={(e) => setBankText(e.target.value)}
                   placeholder='[{"word":"lantern","hint":"light in the dark"}]'
                   rows={3}
-                  className="font-mono text-xs"
+                  className="font-mono text-base"
                 />
                 <div className="flex gap-2 mt-2">
                   <Button size="sm" variant="gold" onClick={importBank} disabled={!bankText.trim()}>

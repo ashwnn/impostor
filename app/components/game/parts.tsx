@@ -296,7 +296,7 @@ export function PlayerList({
                 onClick={() => onSelect(p.id)}
                 disabled={isYou}
                 aria-pressed={selected}
-                className={rowClass + (isYou ? " opacity-50" : " hover:border-ink-soft/50")}
+                className={rowClass + (isYou ? " opacity-50" : " active:border-signal/40")}
               >
                 {content}
               </button>
@@ -309,7 +309,7 @@ export function PlayerList({
                 onClick={() => onKick(p.id)}
                 aria-label={`Remove ${p.name}`}
                 title={`Remove ${p.name}`}
-                className="shrink-0 h-9 w-9 rounded-full border border-ink-line text-ink-soft hover:text-signal hover:border-signal/50 flex items-center justify-center"
+                className="shrink-0 h-11 w-11 rounded-full border border-ink-line text-ink-soft active:text-signal active:border-signal/50 flex items-center justify-center"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -366,7 +366,7 @@ export function ErrorBanner({ message }: { message: string | null }) {
 
 export function HostBar({ children }: { children: React.ReactNode }) {
   return (
-    <div className="sticky bottom-0 -mx-4 mt-6 pt-3 pb-1 bg-gradient-to-t from-ink via-ink/95 to-transparent border-t border-ink-line/60">
+    <div className="sticky bottom-0 -mx-4 mt-6 pt-3 bar-safe bg-gradient-to-t from-ink via-ink/95 to-transparent border-t border-ink-line/60">
       <div className="flex flex-col gap-2">{children}</div>
     </div>
   );

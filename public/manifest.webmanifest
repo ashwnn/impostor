@@ -1,0 +1,12 @@
+{
+  "name": "Impostor",
+  "short_name": "Impostor",
+  "description": "A LAN party word game. One machine hosts, everyone else joins from a browser.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0c1017",
+  "theme_color": "#0c1017",
+  "icons": [
+    { "src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

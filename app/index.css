@@ -29,12 +29,15 @@
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    /* Kills iOS double-tap zoom without blocking pinch zoom. */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   body {
     margin: 0;
     min-height: 100dvh;
-    font-family: var(--font-sans);
+    font-family: "DM Sans", -apple-system, BlinkMacSystemFont, var(--font-sans);
     background:
       radial-gradient(120% 80% at 50% -10%, #1a2233 0%, transparent 55%),
       var(--color-ink);
@@ -51,6 +54,19 @@
   textarea,
   select {
     font: inherit;
+  }
+
+  button,
+  a {
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+  }
+
+  input,
+  textarea {
+    /* iOS zooms focused fields below 16px; keep them at 16px minimum. */
+    font-size: max(16px, 1em);
   }
 
   :focus-visible {
@@ -76,7 +92,15 @@
     flex-direction: column;
     max-width: 32rem;
     margin-inline: auto;
-    padding: 1rem 1rem calc(1.25rem + env(safe-area-inset-bottom));
+    /* Top inset only matters in standalone mode (status bar overlay);
+       it is 0 in Safari, so scrolling stays normal. */
+    padding: calc(1rem + env(safe-area-inset-top)) 1rem
+      calc(1.25rem + env(safe-area-inset-bottom));
+  }
+
+  /* Sticky action bar clears the iPhone home indicator. */
+  .bar-safe {
+    padding-bottom: calc(0.25rem + env(safe-area-inset-bottom));
   }
 
   .display {

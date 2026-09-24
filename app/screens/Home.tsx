@@ -166,7 +166,7 @@ export default function Home() {
                         "h-12 rounded-2xl border text-sm font-semibold transition-colors px-2 " +
                         (poolMode === value
                           ? "border-signal bg-signal-soft text-signal"
-                          : "border-ink-line bg-ink text-ink-soft hover:border-ink-soft/50")
+                          : "border-ink-line bg-ink text-ink-soft active:border-signal/40")
                       }
                     >
                       {label}

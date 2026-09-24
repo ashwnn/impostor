@@ -13,7 +13,7 @@ const variants = {
 
 const sizes = {
   default: "h-12 px-5 text-base",
-  sm: "h-9 px-3 text-sm",
+  sm: "h-11 px-4 text-sm",
   lg: "h-14 px-6 text-lg",
   icon: "h-11 w-11",
 } as const;
@@ -32,7 +32,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       className={cn(
         "inline-flex items-center justify-center gap-2 rounded-full font-semibold transition-colors",
         "disabled:pointer-events-none disabled:opacity-40",
-        "select-none touch-manipulation",
+        "select-none active:brightness-95",
         variants[variant],
         sizes[size],
         className,
