@@ -24,6 +24,7 @@ export const LIMITS = {
   DEFAULT_PLAYERS: 8,
   BANK_MAX_ENTRIES: 500,
   BANK_MAX_BYTES: 200_000,
+  BODY_MAX_BYTES: 256_000,
   ROOM_IDLE_MS: 24 * 60 * 60 * 1000,
   ROOM_CLOSED_DELETE_MS: 5 * 60 * 1000,
 } as const;
@@ -52,20 +53,25 @@ export interface SharedRoomState {
   activeCount: number;
   players: PlayerPublic[];
   bankSize: number;
-  bankLocked: boolean;
+  locked: boolean;
   cluesRevealed: boolean;
   votesRevealed: boolean;
   clues: { playerId: string; name: string; clue: string }[] | null;
   tally: { targetId: string; name: string; votes: number }[] | null;
+  votesDetail: {
+    voterId: string;
+    voterName: string;
+    targetId: string;
+    targetName: string;
+  }[] | null;
   result: {
     impostorId: string;
     impostorName: string;
     crewWin: boolean;
+    tie: boolean;
     selectedImpostorVotes: number;
     maxVotes: number;
-    tie: boolean;
   } | null;
-  error: string | null;
 }
 
 export interface PrivateRole {
@@ -98,27 +104,28 @@ export interface CreateRoomRequest {
 
 export interface CreateRoomResponse {
   roomId: string;
+  hostToken: string;
   invitePath: string;
 }
 
-export interface JoinRequest {
+export interface JoinResponse {
+  playerId: string;
   name: string;
+  sessionToken: string;
+  rejoined: boolean;
 }
 
 export interface SubmissionRequest {
   word: string;
   hint: string;
-  rev: number;
 }
 
 export interface ClueRequest {
   clue: string;
-  rev: number;
 }
 
 export interface VoteRequest {
   targetId: string;
-  rev: number;
 }
 
 export type HostAction =
@@ -130,17 +137,10 @@ export type HostAction =
 
 export interface AdvanceRequest {
   action: HostAction;
-  rev: number;
 }
 
 export interface RemoveRequest {
   targetId: string;
-}
-
-export interface BankRequest {
-  entries?: BankEntry[];
-  clear?: boolean;
-  poolMode?: PoolMode;
 }
 
 export interface SettingsRequest {
@@ -148,10 +148,9 @@ export interface SettingsRequest {
   poolMode?: PoolMode;
 }
 
-export interface ApiError {
+export interface ApiErrorBody {
   error: string;
   fields?: Record<string, string>;
-  state?: RoomStateResponse;
 }
 
 export function normalizeWord(word: string): string {

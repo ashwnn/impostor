@@ -4,6 +4,7 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,
@@ -12,7 +13,7 @@
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-pool-workers/types", "vite/client"]
+    "types": ["node", "vite/client"]
   },
-  "include": ["src", "app", "tests", "vite.config.ts"]
+  "include": ["app", "shared", "server", "tests", "vite.config.ts"]
 }

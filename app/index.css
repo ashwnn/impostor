@@ -18,6 +18,12 @@
   --color-gold: #f0b429;
 
   --radius-card: 1.25rem;
+
+  --text-2xs: 0.6875rem;
+  --text-body: 0.9375rem;
+  --tracking-hero: 0.2em;
+  --tracking-label: 0.18em;
+  --tracking-badges: 0.16em;
 }
 
 @layer base {

@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0c1017" />
+    <meta
+      name="description"
+      content="Impostor — a LAN party word game. One machine hosts, everyone else joins from a browser."
+    />
+    <title>Impostor — LAN party word game</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,700;1,9..40,400&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #0c1017;
+        --raised: #141a24;
+        --line: #1f2733;
+        --soft: #8b95a7;
+        --text: #eef1f6;
+        --signal: #ff5a36;
+        --signal-soft: #2a1510;
+        --crew: #3ecf8e;
+        --crew-soft: #0f241c;
+        --gold: #f0b429;
+        --radius: 1.25rem;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        font-family: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(120% 70% at 50% -10%, #1a2233 0%, transparent 55%),
+          var(--ink);
+        -webkit-font-smoothing: antialiased;
+        line-height: 1.5;
+      }
+
+      .wrap {
+        max-width: 44rem;
+        margin-inline: auto;
+        padding: 3rem 1.25rem 4rem;
+      }
+
+      h1,
+      h2 {
+        font-family: "Syne", "DM Sans", sans-serif;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1.05;
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(3rem, 12vw, 5rem);
+      }
+
+      h2 {
+        font-size: 1.5rem;
+        margin-bottom: 0.75rem;
+      }
+
+      p {
+        color: var(--soft);
+        margin: 0 0 1rem;
+      }
+
+      .eyebrow {
+        color: var(--signal);
+        font-weight: 700;
+        font-size: 0.8rem;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        margin-bottom: 1rem;
+      }
+
+      .lead {
+        font-size: 1.125rem;
+        max-width: 32rem;
+      }
+
+      .cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: var(--signal);
+        color: #fff;
+        font-weight: 700;
+        text-decoration: none;
+        border-radius: 999px;
+        padding: 0.9rem 1.6rem;
+        margin: 1.5rem 0 3rem;
+      }
+
+      .cta:hover {
+        background: #d94422;
+      }
+
+      .grid {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+        margin-bottom: 3rem;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        background: color-mix(in srgb, var(--raised) 92%, transparent);
+        border-radius: var(--radius);
+        padding: 1.25rem;
+      }
+
+      .card h3 {
+        font-family: "Syne", sans-serif;
+        font-size: 1.05rem;
+        margin: 0 0 0.4rem;
+      }
+
+      .card p {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+
+      .num {
+        color: var(--gold);
+        font-weight: 700;
+        font-size: 0.8rem;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        display: block;
+        margin-bottom: 0.5rem;
+      }
+
+      pre {
+        background: #0a0d13;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 1.1rem 1.25rem;
+        overflow-x: auto;
+        font-size: 0.9rem;
+        line-height: 1.7;
+        margin: 0 0 1rem;
+      }
+
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: var(--text);
+      }
+
+      .muted {
+        font-size: 0.85rem;
+      }
+
+      .rule {
+        border: 0;
+        border-top: 1px solid var(--line);
+        margin: 3rem 0;
+      }
+
+      footer {
+        color: var(--soft);
+        font-size: 0.85rem;
+      }
+
+      a {
+        color: var(--text);
+      }
+
+      .pill {
+        display: inline-block;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        border-radius: 999px;
+        padding: 0.25rem 0.7rem;
+        margin-right: 0.5rem;
+      }
+
+      .pill.crew {
+        color: var(--crew);
+        background: var(--crew-soft);
+        border: 1px solid color-mix(in srgb, var(--crew) 40%, transparent);
+      }
+
+      .pill.signal {
+        color: var(--signal);
+        background: var(--signal-soft);
+        border: 1px solid color-mix(in srgb, var(--signal) 40%, transparent);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <p class="eyebrow">Party word game · runs on your LAN</p>
+      <h1>Impostor</h1>
+      <p class="lead" style="margin-top: 1rem">
+        Everyone gets the same secret word — except one player, who only gets a hint. Trade
+        clues, argue out loud, then vote them out. One machine hosts; every phone and laptop
+        on the network joins from a browser.
+      </p>
+      <a class="cta" href="https://github.com/ashwnn/impostor">Get it on GitHub</a>
+
+      <div class="grid">
+        <div class="card">
+          <span class="num">01</span>
+          <h3>Everyone writes a word</h3>
+          <p>
+            Each player secretly submits a candidate word and a hint before the round can
+            start. The chosen word is never one that all players wrote.
+          </p>
+        </div>
+        <div class="card">
+          <span class="num">02</span>
+          <h3>One player is the impostor</h3>
+          <p>
+            The crew sees the word. The impostor sees only the hint — and nobody who wrote
+            the chosen word can be picked as impostor.
+          </p>
+        </div>
+        <div class="card">
+          <span class="num">03</span>
+          <h3>Clues, talk, vote</h3>
+          <p>
+            Clues stay hidden until everyone submits, then reveal together. One vote each.
+            Unique plurality on the impostor means the crew wins.
+          </p>
+        </div>
+      </div>
+
+      <h2>Run it in one minute</h2>
+      <pre><code>git clone https://github.com/ashwnn/impostor.git
+cd impostor
+npm install
+npm start</code></pre>
+      <p class="muted">
+        The server prints a LAN link like <code>http://192.168.1.5:8787</code>. Share it with
+        everyone at the table — no accounts, no internet dependency, no cloud. Rooms live in
+        memory on the host and expire after 24 hours idle.
+      </p>
+
+      <hr class="rule" />
+
+      <h2>What's in the box</h2>
+      <p>
+        <span class="pill crew">Crew</span> sees the word.
+        <span class="pill signal">Impostor</span> sees the hint.
+      </p>
+      <div class="grid">
+        <div class="card">
+          <h3>No accounts</h3>
+          <p>Pick a display name and play. Sessions survive a refresh and keep your seat.</p>
+        </div>
+        <div class="card">
+          <h3>Host word bank</h3>
+          <p>Import a JSON list of word/hint pairs for mixed-pool rounds.</p>
+        </div>
+        <div class="card">
+          <h3>Private roles</h3>
+          <p>Secrets are per-player, server-side. The impostor never receives the word.</p>
+        </div>
+        <div class="card">
+          <h3>3–16 players</h3>
+          <p>One impostor per round, hidden clues, one vote each, instant results.</p>
+        </div>
+      </div>
+
+      <footer>
+        <a href="https://github.com/ashwnn/impostor">Source</a> · MIT · Built with Node, React and Tailwind. Run it at your own table.
+      </footer>
+    </main>
+  </body>
+</html>

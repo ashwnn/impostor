@@ -1,99 +1,149 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BankEntry, PoolMode, RoomStateResponse } from "../../src/shared/protocol";
-import { LIMITS } from "../../src/shared/protocol";
-import { api, getState, joinRoom, openRoomSocket } from "../lib/api";
+import { Settings2, Shuffle, Users } from "lucide-react";
+import type {
+  BankEntry,
+  PoolMode,
+  RoomStateResponse,
+} from "../../shared/protocol.ts";
+import { LIMITS } from "../../shared/protocol.ts";
+import {
+  api,
+  ApiRequestError,
+  clearSessionToken,
+  getState,
+  hasSession,
+  joinRoom,
+  subscribeRoom,
+  type LiveStatus,
+} from "../lib/api.ts";
 import { Button } from "../components/ui/button";
 import { Badge, Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input, Label, Textarea } from "../components/ui/input";
-import { ErrorBanner, HostBar, PhaseBar, PlayerList, RoleCard } from "./parts";
+import {
+  ConnectionBadge,
+  ErrorBanner,
+  GuideCard,
+  HostBar,
+  HostTag,
+  InviteStrip,
+  PhaseBar,
+  PhaseCount,
+  PlayerList,
+  RoleCard,
+} from "../components/game/parts.tsx";
 import { navigate } from "../App";
 
-type Status = "loading" | "need-name" | "ready" | "error" | "closed";
-
 export default function Room({ roomId }: { roomId: string }) {
-  const [status, setStatus] = useState<Status>("loading");
   const [state, setState] = useState<RoomStateResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [status, setStatus] = useState<LiveStatus>("connecting");
   const [name, setName] = useState("");
-  const [nameBusy, setNameBusy] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
-  const syncedRef = useRef(false);
+  const [joining, setJoining] = useState(false);
+  const [forceJoin, setForceJoin] = useState(false);
+  // Bumped whenever the tab's credentials change (joined or switched seat) so
+  // the SSE stream reconnects with the right token and stops pushing an
+  // anonymous view of the room.
+  const [authEpoch, setAuthEpoch] = useState(0);
+  const stateRef = useRef<RoomStateResponse | null>(null);
 
-  const apply = useCallback((s: RoomStateResponse) => {
-    setState(s);
-    if (s.shared.phase === "CLOSED") setStatus("closed");
-    else if (s.you.inRoom || s.you.isHost) setStatus("ready");
-    else setStatus("need-name");
+  const apply = useCallback((next: RoomStateResponse) => {
+    stateRef.current = next;
+    setState(next);
   }, []);
 
   const refresh = useCallback(async () => {
     try {
-      const s = await getState(roomId);
-      apply(s);
-      if (s.shared.phase === "CLOSED") setStatus("closed");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load room");
-      setStatus("error");
+      const next = await getState(roomId);
+      apply(next);
+      setLoadError(null);
+      return next;
+    } catch (err) {
+      const message = err instanceof ApiRequestError ? err.message : "Could not reach the server";
+      setLoadError(message);
+      return null;
     }
   }, [roomId, apply]);
 
   useEffect(() => {
     let cancelled = false;
+    let cleanup: (() => void) | undefined;
     void (async () => {
-      await refresh();
+      const first = await refresh();
       if (cancelled) return;
-      const ws = openRoomSocket(roomId, (data) => {
-        syncedRef.current = true;
-        apply(data);
+      setLoading(false);
+      if (first?.shared.phase === "CLOSED") return;
+      cleanup = subscribeRoom(roomId, {
+        onState: (next) => apply(next),
+        onStatus: setStatus,
+        onReconnect: () => {
+          void refresh();
+        },
       });
-      wsRef.current = ws;
-      ws.addEventListener("open", () => {
-        ws.send(JSON.stringify({ type: "sync" }));
-      });
-      // Fallback poll if WS stays silent
-      const poll = window.setInterval(() => {
-        if (ws.readyState !== WebSocket.OPEN) void refresh();
-      }, 5000);
-      return () => window.clearInterval(poll);
     })();
     return () => {
       cancelled = true;
-      wsRef.current?.close();
-      wsRef.current = null;
+      cleanup?.();
     };
-  }, [roomId, apply, refresh]);
-
-  async function handleJoin(e: React.FormEvent) {
-    e.preventDefault();
-    setNameBusy(true);
-    setError(null);
-    try {
-      await joinRoom(roomId, name.trim());
-      const s = await getState(roomId);
-      apply(s);
-      wsRef.current?.send(JSON.stringify({ type: "sync" }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not join");
-    } finally {
-      setNameBusy(false);
-    }
-  }
+  }, [roomId, authEpoch, apply, refresh]);
 
   async function run(fn: () => Promise<RoomStateResponse>) {
     setError(null);
     setFieldErrors({});
     try {
-      const s = await fn();
-      apply(s);
+      apply(await fn());
     } catch (err) {
-      const e = err as Error & { fields?: Record<string, string> };
-      setError(e.message);
-      if (e.fields) setFieldErrors(e.fields);
+      if (err instanceof ApiRequestError) {
+        setError(err.message);
+        if (err.fields) setFieldErrors(err.fields);
+      } else {
+        setError("Something went wrong — is the server still running?");
+      }
     }
   }
 
-  if (status === "loading") {
+  async function handleJoin(event: React.FormEvent) {
+    event.preventDefault();
+    setJoining(true);
+    setError(null);
+    setFieldErrors({});
+    try {
+      await joinRoom(roomId, name.trim());
+      setForceJoin(false);
+      setAuthEpoch((epoch) => epoch + 1);
+      await refresh();
+    } catch (err) {
+      if (err instanceof ApiRequestError) {
+        setError(err.message);
+        if (err.fields) setFieldErrors(err.fields);
+      } else {
+        setError("Could not join the room");
+      }
+    } finally {
+      setJoining(false);
+    }
+  }
+
+  async function switchPlayer() {
+    // Release the current seat (best effort — only possible between rounds)
+    // so a full room can still fit the new player.
+    if (state?.you.inRoom) {
+      try {
+        await api.leave(roomId);
+      } catch {
+        // seat may already be gone or the round may be locked; join will explain
+      }
+    }
+    clearSessionToken(roomId);
+    setForceJoin(true);
+    setName("");
+    setAuthEpoch((epoch) => epoch + 1);
+    await refresh();
+  }
+
+  if (loading) {
     return (
       <div className="app-shell justify-center items-center">
         <p className="text-ink-soft animate-pulse">Loading room…</p>
@@ -101,11 +151,14 @@ export default function Room({ roomId }: { roomId: string }) {
     );
   }
 
-  if (status === "error") {
+  if (loadError && !state) {
     return (
       <div className="app-shell justify-center gap-4 text-center">
         <h1 className="display text-3xl">Room unavailable</h1>
-        <p className="text-ink-soft text-sm">{error}</p>
+        <p className="text-ink-soft text-sm">{loadError}</p>
+        <p className="text-ink-soft text-xs">
+          Check that the server is running on the host machine and that you are on the same network.
+        </p>
         <Button variant="secondary" onClick={() => navigate("/")}>
           Back home
         </Button>
@@ -113,251 +166,378 @@ export default function Room({ roomId }: { roomId: string }) {
     );
   }
 
-  if (status === "closed") {
+  if (state?.shared.phase === "CLOSED") {
     return (
       <div className="app-shell justify-center gap-4 text-center">
         <h1 className="display text-3xl">Room closed</h1>
-        <p className="text-ink-soft text-sm">
-          This game has ended or expired. Create a new room to play again.
-        </p>
+        <p className="text-ink-soft text-sm">The host ended this game.</p>
         <Button onClick={() => navigate("/")}>New room</Button>
       </div>
     );
   }
 
-  if (status === "need-name" || !state) {
+  const joined = !!state?.you.inRoom;
+  if ((!joined && !state?.you.isHost) || forceJoin) {
     return (
-      <div className="app-shell justify-center gap-6">
-        <header className="text-center">
-          <p className="text-signal font-semibold text-sm tracking-[0.18em] uppercase mb-2">
-            Invite
-          </p>
-          <h1 className="display text-4xl">Join the table</h1>
-        </header>
-        <Card>
-          <CardContent className="p-5">
-            <form onSubmit={handleJoin} className="flex flex-col gap-4">
-              <div>
-                <Label htmlFor="name">Display name</Label>
-                <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  maxLength={LIMITS.NAME_MAX}
-                  placeholder="What should we call you?"
-                  autoComplete="nickname"
-                  required
-                />
-                {fieldErrors.name && (
-                  <p className="text-signal text-xs mt-1">{fieldErrors.name}</p>
-                )}
-              </div>
-              {error && (
-                <p className="text-signal text-sm" role="alert">
-                  {error}
-                </p>
-              )}
-              <Button type="submit" size="lg" disabled={nameBusy || !name.trim()}>
-                {nameBusy ? "Joining…" : "Join room"}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-        <p className="text-center text-xs text-ink-soft">
-          No account needed. Your seat is remembered on this device.
-        </p>
-        <div className="mt-auto" />
-      </div>
+      <JoinScreen
+        roomId={roomId}
+        name={name}
+        setName={setName}
+        joining={joining}
+        error={error}
+        fieldErrors={fieldErrors}
+        onJoin={handleJoin}
+        hadSession={hasSession(roomId)}
+      />
     );
   }
 
+  if (!state) return null;
+
   const { shared, you } = state;
   const rev = shared.rev;
+  const kick = (targetId: string) => run(() => api.remove(roomId, targetId));
 
   return (
     <div className="app-shell">
-      <header className="flex items-start justify-between gap-3 mb-3">
-        <div>
-          <h1 className="display text-2xl">Impostor</h1>
-          <p className="text-xs text-ink-soft font-mono mt-0.5">
-            /r/{roomId.slice(0, 8)}… · round {shared.round || "—"} ·{" "}
-            {shared.activeCount}/{shared.maxPlayers}
+      <header className="flex items-start justify-between gap-2 mb-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h1 className="display text-2xl">Impostor</h1>
+            {you.isHost && <HostTag />}
+          </div>
+          <p className="text-xs text-ink-soft mt-0.5">
+            {shared.round > 0 ? `Round ${shared.round} · ` : ""}
+            {shared.activeCount}/{shared.maxPlayers} players
           </p>
         </div>
-        <Badge tone="gold">{shared.poolMode === "mixed" ? "Mixed pool" : "Player words"}</Badge>
+        <ConnectionBadge status={status} />
       </header>
 
-      <PhaseBar shared={shared} />
+      <div className="mb-4">
+        <InviteStrip roomId={shared.roomId} />
+      </div>
+
+      <PhaseBar phase={shared.phase} />
       <ErrorBanner message={error} />
 
-      {you.isHost && (
-        <p className="text-[11px] text-gold font-semibold mb-3 tracking-wide">
-          Host controls active
-        </p>
-      )}
+      <main className="flex flex-col gap-4">
+        {shared.phase !== "RESULTS" && <GuideCard shared={shared} you={you} />}
 
-      <main className="flex flex-col gap-5 stagger">
         {shared.phase === "LOBBY" && (
           <LobbyView
             state={state}
             onSettings={(opts) => run(() => api.settings(roomId, opts))}
             onBank={(entries) => run(() => api.bankReplace(roomId, entries))}
             onBankClear={() => run(() => api.bankClear(roomId))}
-            onBegin={() => run(() => api.advance(roomId, "begin", rev))}
-            onRemove={(id) => run(() => api.remove(roomId, id))}
             fieldErrors={fieldErrors}
           />
         )}
 
-        {shared.phase === "SUBMITTING" && (
-          <SubmittingView
+        {shared.phase === "SUBMITTING" && joined && (
+          <SubmitView
             state={state}
-            onSubmit={(word, hint) => run(() => api.submission(roomId, word, hint, rev))}
-            onStart={() => run(() => api.start(roomId, rev))}
-            onCancel={() => run(() => api.advance(roomId, "cancel", rev))}
+            onSubmit={(word, hint) => run(() => api.submission(roomId, word, hint))}
             fieldErrors={fieldErrors}
           />
         )}
 
-        {(shared.phase === "ROLE_REVEAL" ||
-          shared.phase === "CLUES_PENDING" ||
-          shared.phase === "DISCUSSION" ||
-          shared.phase === "VOTING" ||
-          shared.phase === "RESULTS") && (
+        {shared.phase !== "LOBBY" && shared.phase !== "SUBMITTING" && (
           <RoleCard you={you} phase={shared.phase} />
         )}
 
-        {shared.phase === "ROLE_REVEAL" && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Memorize your role</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-ink-soft text-sm mb-4">
-                Crew: keep the word secret. Impostor: bluff from the hint alone.
-                When everyone is ready, the host opens clue writing.
-              </p>
-              {you.isHost && (
-                <HostBar>
-                  <Button size="lg" onClick={() => run(() => api.advance(roomId, "advance", rev))}>
-                    Open clue writing
-                  </Button>
-                  <Button
-                    variant="danger"
-                    onClick={() => run(() => api.advance(roomId, "cancel", rev))}
-                  >
-                    Reset round
-                  </Button>
-                </HostBar>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {shared.phase === "CLUES_PENDING" && (
-          <ClueView
+        {shared.phase === "CLUES_PENDING" && joined && (
+          <ClueForm
             state={state}
-            onSubmit={(clue) => run(() => api.clue(roomId, clue, rev))}
-            onCancel={() => run(() => api.advance(roomId, "cancel", rev))}
+            onSubmit={(clue) => run(() => api.clue(roomId, clue))}
             fieldErrors={fieldErrors}
           />
         )}
 
-        {shared.phase === "DISCUSSION" && (
-          <CluesRevealedView state={state} />
-        )}
+        {(shared.phase === "DISCUSSION" ||
+          shared.phase === "VOTING" ||
+          shared.phase === "RESULTS") &&
+          shared.clues && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Clues</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="flex flex-col gap-2">
+                  {shared.clues.map((clue) => (
+                    <li
+                      key={clue.playerId}
+                      className="rounded-2xl border border-ink-line bg-ink px-4 py-3 flex items-baseline justify-between gap-3"
+                    >
+                      <span className="text-sm text-ink-soft font-semibold shrink-0">
+                        {clue.name}
+                      </span>
+                      <span className="font-semibold text-right">{clue.clue}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
 
-        {shared.phase === "DISCUSSION" && you.isHost && (
-          <HostBar>
-            <Button
-              size="lg"
-              onClick={() => run(() => api.advance(roomId, "advance", rev))}
-            >
-              Start voting
-            </Button>
-          </HostBar>
-        )}
-
-        {shared.phase === "VOTING" && (
+        {shared.phase === "VOTING" && joined && (
           <VoteView
             state={state}
-            onVote={(id) => run(() => api.vote(roomId, id, rev))}
-            onForce={() => run(() => api.advance(roomId, "force_results", rev))}
+            onVote={(targetId) => run(() => api.vote(roomId, targetId))}
             fieldErrors={fieldErrors}
+            onKick={undefined}
           />
         )}
 
         {shared.phase === "RESULTS" && <ResultsView state={state} />}
 
-        {shared.phase === "RESULTS" && you.isHost && (
-          <HostBar>
-            <Button
-              size="lg"
-              onClick={() => run(() => api.advance(roomId, "advance", rev))}
-            >
-              Next round
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => run(() => api.advance(roomId, "close", rev))}
-            >
-              Close room
-            </Button>
-          </HostBar>
-        )}
+        <section>
+          <h2 className="text-xs font-bold tracking-badges uppercase text-ink-soft mb-2">
+            Players
+          </h2>
+          <PlayerList
+            players={shared.players}
+            youId={you.playerId}
+            phase={shared.phase}
+            isHost={you.isHost}
+            tally={shared.tally}
+            onKick={kick}
+            impostorId={shared.result?.impostorId ?? null}
+          />
+          <PhaseCount state={state} />
+        </section>
       </main>
 
-      <section className="mt-6">
-        <h2 className="text-xs font-bold tracking-[0.16em] uppercase text-ink-soft mb-2">
-          Players
-        </h2>
-        <PlayerList
-          players={shared.players}
-          youId={you.playerId}
-          showVotes={shared.phase === "RESULTS"}
-          votesRevealed={shared.votesRevealed}
-          tally={shared.tally}
-        />
-        {shared.phase === "SUBMITTING" && you.isHost && (
-          <HostBar>
-            <Button
-              size="lg"
-              disabled={
-                shared.activeCount < LIMITS.MIN_PLAYERS ||
-                shared.players.some((p) => !p.submitted)
-              }
-              onClick={() => run(() => api.start(roomId, rev))}
-            >
-              Start round
-            </Button>
-            <p className="text-center text-xs text-ink-soft pb-1">
-              {shared.players.some((p) => !p.submitted)
-                ? "Waiting for every word"
-                : "All words in — start when ready"}
-            </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => run(() => api.advance(roomId, "cancel", rev))}
-            >
-              Reset submissions
-            </Button>
-          </HostBar>
-        )}
-        {shared.phase === "LOBBY" && you.isHost && shared.activeCount >= LIMITS.MIN_PLAYERS && (
-          <HostBar>
-            <Button size="lg" onClick={() => run(() => api.advance(roomId, "begin", rev))}>
-              Open submissions ({shared.activeCount} players)
-            </Button>
-          </HostBar>
-        )}
-      </section>
+      <HostControls
+        state={state}
+        onRun={run}
+        roomId={roomId}
+        rev={rev}
+        onSwitchPlayer={switchPlayer}
+      />
 
-      <footer className="mt-8 text-center text-[11px] text-ink-soft/70 pb-2">
-        Disconnect keeps your seat. Rooms expire after 24h idle.
+      <footer className="mt-6 text-center text-2xs text-ink-soft/70 pb-2 flex flex-col gap-2 items-center">
+        <span>Disconnecting keeps your seat. Refresh to rejoin.</span>
+        {!you.isHost && joined && (
+          <button
+            type="button"
+            onClick={switchPlayer}
+            className="underline underline-offset-2 hover:text-ink-soft"
+          >
+            Join as a different player
+          </button>
+        )}
       </footer>
     </div>
   );
+}
+
+function JoinScreen({
+  roomId,
+  name,
+  setName,
+  joining,
+  error,
+  fieldErrors,
+  onJoin,
+  hadSession,
+}: {
+  roomId: string;
+  name: string;
+  setName: (value: string) => void;
+  joining: boolean;
+  error: string | null;
+  fieldErrors: Record<string, string>;
+  onJoin: (event: React.FormEvent) => void;
+  hadSession: boolean;
+}) {
+  return (
+    <div className="app-shell justify-center gap-6">
+      <header className="text-center">
+        <p className="text-signal font-semibold text-sm tracking-label uppercase mb-2">
+          You&apos;re invited
+        </p>
+        <h1 className="display text-4xl">Join the table</h1>
+        <p className="text-ink-soft text-sm mt-2 font-mono">room {roomId.slice(0, 8)}</p>
+      </header>
+      <Card>
+        <CardContent className="p-5">
+          <form onSubmit={onJoin} className="flex flex-col gap-4">
+            <div>
+              <Label htmlFor="name">Display name</Label>
+              <Input
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={LIMITS.NAME_MAX}
+                placeholder="What should we call you?"
+                autoComplete="nickname"
+                autoFocus
+                required
+              />
+              {fieldErrors.name && (
+                <p className="text-signal text-xs mt-1">{fieldErrors.name}</p>
+              )}
+            </div>
+            {error && (
+              <p className="text-signal text-sm" role="alert">
+                {error}
+              </p>
+            )}
+            <Button type="submit" size="lg" disabled={joining || !name.trim()}>
+              {joining ? "Joining…" : "Join room"}
+            </Button>
+            {hadSession && (
+              <p className="text-center text-xs text-ink-soft">
+                Joining with a new name starts a new seat. Refreshing without joining restores
+                your old seat.
+              </p>
+            )}
+          </form>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function HostControls({
+  state,
+  onRun,
+  roomId,
+  onSwitchPlayer,
+}: {
+  state: RoomStateResponse;
+  onRun: (fn: () => Promise<RoomStateResponse>) => void;
+  roomId: string;
+  rev: number;
+  onSwitchPlayer: () => void;
+}) {
+  const { shared, you } = state;
+  if (!you.isHost) return null;
+
+  const missing = shared.players.filter((p) => !p.submitted).map((p) => p.name);
+  const clueMissing = shared.players.filter((p) => !p.clueSubmitted).map((p) => p.name);
+  const voteMissing = shared.players.filter((p) => !p.hasVoted).map((p) => p.name);
+
+  switch (shared.phase) {
+    case "LOBBY":
+      return (
+        <HostBar>
+          <Button
+            size="lg"
+            disabled={shared.activeCount < LIMITS.MIN_PLAYERS}
+            onClick={() => onRun(() => api.advance(roomId, "begin"))}
+          >
+            {shared.activeCount < LIMITS.MIN_PLAYERS
+              ? `Need ${LIMITS.MIN_PLAYERS}+ players (${shared.activeCount} in)`
+              : `Open word round · ${shared.activeCount} players`}
+          </Button>
+          {shared.activeCount >= LIMITS.MIN_PLAYERS && shared.activeCount < 4 && (
+            <p className="text-center text-xs text-ink-soft">
+              You can start small — 3 players means one round each.
+            </p>
+          )}
+          {!you.inRoom && (
+            <Button variant="ghost" onClick={onSwitchPlayer}>
+              Join as a player too
+            </Button>
+          )}
+        </HostBar>
+      );
+    case "SUBMITTING":
+      return (
+        <HostBar>
+          <Button
+            size="lg"
+            disabled={missing.length > 0 || shared.activeCount < LIMITS.MIN_PLAYERS}
+            onClick={() => onRun(() => api.start(roomId))}
+          >
+            {missing.length ? `Waiting on ${missing.join(", ")}` : "Start round"}
+          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="flex-1"
+              onClick={() => onRun(() => api.advance(roomId, "cancel"))}
+            >
+              Clear words
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="flex-1"
+              onClick={() => onRun(() => api.advance(roomId, "close"))}
+            >
+              Close room
+            </Button>
+          </div>
+        </HostBar>
+      );
+    case "ROLE_REVEAL":
+      return (
+        <HostBar>
+          <Button size="lg" onClick={() => onRun(() => api.advance(roomId, "advance"))}>
+            Roles shown — collect clues
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => onRun(() => api.advance(roomId, "cancel"))}
+          >
+            Reset round
+          </Button>
+        </HostBar>
+      );
+    case "CLUES_PENDING":
+      return (
+        <HostBar>
+          <p className="text-center text-xs text-ink-soft">
+            {clueMissing.length
+              ? `Waiting on ${clueMissing.join(", ")}`
+              : "All clues in — revealing now…"}
+          </p>
+          <Button
+            variant="danger"
+            size="sm"
+            onClick={() => onRun(() => api.advance(roomId, "cancel"))}
+          >
+            Reset round before reveal
+          </Button>
+        </HostBar>
+      );
+    case "DISCUSSION":
+      return (
+        <HostBar>
+          <Button size="lg" onClick={() => onRun(() => api.advance(roomId, "advance"))}>
+            Start voting
+          </Button>
+        </HostBar>
+      );
+    case "VOTING":
+      return (
+        <HostBar>
+          <Button variant="secondary" onClick={() => onRun(() => api.advance(roomId, "force_results"))}>
+            {voteMissing.length
+              ? `Reveal now without ${voteMissing.join(", ")}`
+              : "Reveal results"}
+          </Button>
+        </HostBar>
+      );
+    case "RESULTS":
+      return (
+        <HostBar>
+          <Button size="lg" onClick={() => onRun(() => api.advance(roomId, "advance"))}>
+            Next round
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => onRun(() => api.advance(roomId, "close"))}>
+            Close room
+          </Button>
+        </HostBar>
+      );
+    default:
+      return null;
+  }
 }
 
 function LobbyView({
@@ -365,21 +545,31 @@ function LobbyView({
   onSettings,
   onBank,
   onBankClear,
-  onBegin,
-  onRemove,
   fieldErrors,
 }: {
   state: RoomStateResponse;
-  onSettings: (o: { maxPlayers?: number; poolMode?: PoolMode }) => void;
+  onSettings: (opts: { maxPlayers?: number; poolMode?: PoolMode }) => void;
   onBank: (entries: BankEntry[]) => void;
   onBankClear: () => void;
-  onBegin: () => void;
-  onRemove: (id: string) => void;
   fieldErrors: Record<string, string>;
 }) {
   const { shared, you } = state;
+  const [showSettings, setShowSettings] = useState(false);
   const [bankText, setBankText] = useState("");
   const [bankMsg, setBankMsg] = useState<string | null>(null);
+
+  if (!you.isHost) {
+    return (
+      <Card>
+        <CardContent className="p-5 text-sm text-ink-soft flex items-center gap-3">
+          <Users className="h-5 w-5 shrink-0" />
+          {shared.activeCount >= shared.maxPlayers
+            ? "The room is full. Wait for the host to start."
+            : "Invite more people, or just wait for the host to start."}
+        </CardContent>
+      </Card>
+    );
+  }
 
   function importBank() {
     setBankMsg(null);
@@ -390,16 +580,14 @@ function LobbyView({
       onBank(entries);
       setBankMsg(`Imported ${entries.length} pairs`);
       setBankText("");
-    } catch (e) {
-      setBankMsg(e instanceof Error ? e.message : "Invalid JSON");
+    } catch (err) {
+      setBankMsg(err instanceof Error ? err.message : "Invalid JSON");
     }
   }
 
   function exportBank() {
     const entries = you.bank ?? [];
-    const blob = new Blob([JSON.stringify(entries, null, 2)], {
-      type: "application/json",
-    });
+    const blob = new Blob([JSON.stringify(entries, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -409,159 +597,125 @@ function LobbyView({
   }
 
   return (
-    <>
-      <Card>
-        <CardHeader>
-          <CardTitle>Waiting for players</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-ink-soft text-sm mb-4">
-            Share the invite. Need at least {LIMITS.MIN_PLAYERS} before opening submissions.
-          </p>
-          <InviteBlock roomId={shared.roomId} />
-          {you.isHost && (
-            <div className="mt-5 flex flex-col gap-4">
-              <div>
-                <Label htmlFor="lim">Player limit · {shared.maxPlayers}</Label>
-                <input
-                  id="lim"
-                  type="range"
-                  min={Math.max(LIMITS.MIN_PLAYERS, shared.activeCount)}
-                  max={LIMITS.MAX_PLAYERS}
-                  value={shared.maxPlayers}
-                  onChange={(e) => onSettings({ maxPlayers: Number(e.target.value) })}
-                  className="w-full accent-signal h-2"
-                  disabled={shared.bankLocked}
-                />
-                {fieldErrors.maxPlayers && (
-                  <p className="text-signal text-xs mt-1">{fieldErrors.maxPlayers}</p>
-                )}
-              </div>
-              <div>
-                <Label>Pool</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      ["submissions", "Players only"],
-                      ["mixed", "Mixed + bank"],
-                    ] as const
-                  ).map(([v, label]) => (
-                    <button
-                      key={v}
-                      type="button"
-                      onClick={() => onSettings({ poolMode: v })}
-                      className={
-                        "h-11 rounded-2xl border text-sm font-semibold " +
-                        (shared.poolMode === v
-                          ? "border-signal bg-signal-soft text-signal"
-                          : "border-ink-line bg-ink text-ink-soft")
-                      }
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {shared.poolMode === "mixed" && (
-                <div>
-                  <Label htmlFor="bank">Host word bank (JSON)</Label>
-                  <Textarea
-                    id="bank"
-                    value={bankText}
-                    onChange={(e) => setBankText(e.target.value)}
-                    placeholder='[{"word":"lantern","hint":"light in the dark"}]'
-                    rows={4}
-                    className="font-mono text-sm"
-                  />
-                  <div className="flex gap-2 mt-2">
-                    <Button size="sm" variant="gold" onClick={importBank} disabled={!bankText.trim()}>
-                      Import
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={exportBank}
-                      disabled={!shared.bankSize}
-                    >
-                      Export
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={onBankClear}>
-                      Clear
-                    </Button>
-                  </div>
-                  <p className="text-xs text-ink-soft mt-2">
-                    {shared.bankSize} pairs stored · max {LIMITS.BANK_MAX_ENTRIES} ·{" "}
-                    {LIMITS.BANK_MAX_BYTES / 1000}KB
-                  </p>
-                  {bankMsg && <p className="text-xs text-gold mt-1">{bankMsg}</p>}
-                </div>
+    <Card>
+      <CardHeader className="flex items-center justify-between">
+        <CardTitle className="text-lg">Room setup</CardTitle>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setShowSettings((v) => !v)}
+          aria-expanded={showSettings}
+        >
+          <Settings2 className="h-4 w-4" />
+          {showSettings ? "Hide" : "Edit"}
+        </Button>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 text-sm text-ink-soft">
+          <Badge tone="neutral">
+            {shared.maxPlayers} players max
+          </Badge>
+          <Badge tone={shared.poolMode === "mixed" ? "gold" : "neutral"}>
+            <Shuffle className="h-3 w-3" />
+            {shared.poolMode === "mixed" ? "Players + host bank" : "Player words only"}
+          </Badge>
+        </div>
+
+        {showSettings && (
+          <div className="flex flex-col gap-4 pt-1">
+            <div>
+              <Label htmlFor="limit">Player limit · {shared.maxPlayers}</Label>
+              <input
+                id="limit"
+                type="range"
+                min={Math.max(LIMITS.MIN_PLAYERS, shared.activeCount)}
+                max={LIMITS.MAX_PLAYERS}
+                value={shared.maxPlayers}
+                onChange={(e) => onSettings({ maxPlayers: Number(e.target.value) })}
+                className="w-full accent-signal h-2"
+              />
+              {fieldErrors.maxPlayers && (
+                <p className="text-signal text-xs mt-1">{fieldErrors.maxPlayers}</p>
               )}
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {!you.inRoom && you.isHost && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Take a seat?</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-ink-soft text-sm">
-              You are hosting. Join with a name to play, or stay host-only.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-    </>
+            <div>
+              <Label>Word pool</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {(
+                  [
+                    ["submissions", "Player words only"],
+                    ["mixed", "Players + bank"],
+                  ] as const
+                ).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => onSettings({ poolMode: value })}
+                    className={
+                      "h-11 rounded-2xl border text-sm font-semibold px-2 " +
+                      (shared.poolMode === value
+                        ? "border-signal bg-signal-soft text-signal"
+                        : "border-ink-line bg-ink text-ink-soft hover:border-ink-soft/50")
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {shared.poolMode === "mixed" && (
+              <div>
+                <Label htmlFor="bank">Host word bank (JSON)</Label>
+                <Textarea
+                  id="bank"
+                  value={bankText}
+                  onChange={(e) => setBankText(e.target.value)}
+                  placeholder='[{"word":"lantern","hint":"light in the dark"}]'
+                  rows={3}
+                  className="font-mono text-xs"
+                />
+                <div className="flex gap-2 mt-2">
+                  <Button size="sm" variant="gold" onClick={importBank} disabled={!bankText.trim()}>
+                    Import
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={exportBank}
+                    disabled={!shared.bankSize}
+                  >
+                    Export
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={onBankClear} disabled={!shared.bankSize}>
+                    Clear
+                  </Button>
+                </div>
+                <p className="text-xs text-ink-soft mt-2">
+                  {shared.bankSize} pairs stored · max {LIMITS.BANK_MAX_ENTRIES} pairs
+                </p>
+                {bankMsg && <p className="text-xs text-gold mt-1">{bankMsg}</p>}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
-function InviteBlock({ roomId }: { roomId: string }) {
-  const [copied, setCopied] = useState(false);
-  const link = `${window.location.origin}/r/${roomId}`;
-  return (
-    <div className="flex gap-2">
-      <Input
-        readOnly
-        value={link}
-        className="font-mono text-sm h-11"
-        onFocus={(e) => e.currentTarget.select()}
-      />
-      <Button
-        variant="gold"
-        className="shrink-0 h-11 px-4"
-        onClick={() => {
-          void navigator.clipboard?.writeText(link);
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1500);
-        }}
-      >
-        {copied ? "Copied" : "Copy"}
-      </Button>
-    </div>
-  );
-}
-
-function SubmittingView({
+function SubmitView({
   state,
   onSubmit,
-  onStart,
-  onCancel,
   fieldErrors,
 }: {
   state: RoomStateResponse;
   onSubmit: (word: string, hint: string) => void;
-  onStart: () => void;
-  onCancel: () => void;
   fieldErrors: Record<string, string>;
 }) {
-  const { shared, you } = state;
-  const existing = you.mySubmission;
+  const existing = state.you.mySubmission;
   const [word, setWord] = useState(existing?.word ?? "");
   const [hint, setHint] = useState(existing?.hint ?? "");
   const [dirty, setDirty] = useState(false);
-  const submitted = !!existing && !dirty;
 
   useEffect(() => {
     if (existing && !dirty) {
@@ -570,200 +724,123 @@ function SubmittingView({
     }
   }, [existing, dirty]);
 
-  if (!you.inRoom) {
-    return (
-      <Card>
-        <CardContent className="p-5 text-sm text-ink-soft">
-          You are spectating as host. Join with a name to submit a word.
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const allIn = shared.players.length > 0 && shared.players.every((p) => p.submitted);
+  const submitted = !!existing && !dirty;
 
   return (
-    <>
-      <Card>
-        <CardHeader>
-          <CardTitle>Your candidate</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form
-            className="flex flex-col gap-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setDirty(false);
-              onSubmit(word, hint);
-            }}
-          >
-            <div>
-              <Label htmlFor="word">Secret word</Label>
-              <Input
-                id="word"
-                value={word}
-                maxLength={LIMITS.WORD_MAX}
-                onChange={(e) => {
-                  setWord(e.target.value);
-                  setDirty(true);
-                }}
-                placeholder="e.g. lantern"
-                autoComplete="off"
-              />
-              <p className="text-[11px] text-ink-soft mt-1 text-right">
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Your secret word</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit(word, hint);
+            setDirty(false);
+          }}
+        >
+          <div>
+            <Label htmlFor="word">Word</Label>
+            <Input
+              id="word"
+              value={word}
+              maxLength={LIMITS.WORD_MAX}
+              onChange={(e) => {
+                setWord(e.target.value);
+                setDirty(true);
+              }}
+              placeholder="e.g. lantern"
+              autoComplete="off"
+            />
+            <div className="flex justify-between mt-1">
+              {fieldErrors.word ? (
+                <p className="text-signal text-xs">{fieldErrors.word}</p>
+              ) : (
+                <span />
+              )}
+              <span className="text-2xs text-ink-soft">
                 {word.length}/{LIMITS.WORD_MAX}
-              </p>
-              {fieldErrors.word && (
-                <p className="text-signal text-xs -mt-1">{fieldErrors.word}</p>
-              )}
+              </span>
             </div>
-            <div>
-              <Label htmlFor="hint">Private hint (shown to the impostor)</Label>
-              <Textarea
-                id="hint"
-                value={hint}
-                maxLength={LIMITS.HINT_MAX}
-                onChange={(e) => {
-                  setHint(e.target.value);
-                  setDirty(true);
-                }}
-                placeholder="e.g. light in the dark"
-                rows={3}
-              />
-              <p className="text-[11px] text-ink-soft mt-1 text-right">
+          </div>
+          <div>
+            <Label htmlFor="hint">Hint (only the impostor sees this)</Label>
+            <Textarea
+              id="hint"
+              value={hint}
+              maxLength={LIMITS.HINT_MAX}
+              onChange={(e) => {
+                setHint(e.target.value);
+                setDirty(true);
+              }}
+              placeholder="e.g. light in the dark"
+              rows={3}
+            />
+            <div className="flex justify-between mt-1">
+              {fieldErrors.hint ? (
+                <p className="text-signal text-xs">{fieldErrors.hint}</p>
+              ) : (
+                <span />
+              )}
+              <span className="text-2xs text-ink-soft">
                 {hint.length}/{LIMITS.HINT_MAX}
-              </p>
-              {fieldErrors.hint && (
-                <p className="text-signal text-xs -mt-1">{fieldErrors.hint}</p>
-              )}
+              </span>
             </div>
-            <Button type="submit" size="lg" disabled={!word.trim() || !hint.trim()}>
-              {submitted ? "Update submission" : "Submit word"}
-            </Button>
-            {submitted && (
-              <p className="text-center text-crew text-sm font-semibold">
-                In · others only see that you submitted
-              </p>
-            )}
-          </form>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            Lobby
-            <Badge tone={allIn ? "crew" : "neutral"}>
-              {shared.players.filter((p) => p.submitted).length}/{shared.activeCount}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <PlayerList players={shared.players} youId={you.playerId} />
-        </CardContent>
-      </Card>
-    </>
+          </div>
+          <Button type="submit" size="lg" disabled={!word.trim() || !hint.trim()}>
+            {submitted ? "Update word" : "Submit word"}
+          </Button>
+          {submitted && (
+            <p className="text-center text-crew text-sm font-semibold">
+              Saved — others only see that you&apos;re ready
+            </p>
+          )}
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 
-function ClueView({
+function ClueForm({
   state,
   onSubmit,
-  onCancel,
   fieldErrors,
 }: {
   state: RoomStateResponse;
   onSubmit: (clue: string) => void;
-  onCancel: () => void;
   fieldErrors: Record<string, string>;
 }) {
-  const { shared, you } = state;
-  const [clue, setClue] = useState(you.myClue ?? "");
+  const [clue, setClue] = useState(state.you.myClue ?? "");
+  const saved = !!state.you.myClue;
 
-  if (!you.inRoom) {
-    return (
-      <Card>
-        <CardContent className="p-5 text-sm text-ink-soft">
-          Waiting for players to write clues.
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <>
-      <Card>
-        <CardHeader>
-          <CardTitle>One clue</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-ink-soft text-sm mb-3">
-            1–3 words. Hidden until everyone is in.
-          </p>
-          <form
-            className="flex flex-col gap-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              onSubmit(clue);
-            }}
-          >
-            <Input
-              value={clue}
-              maxLength={LIMITS.CLUE_MAX}
-              onChange={(e) => setClue(e.target.value)}
-              placeholder="e.g. flickers softly"
-              autoComplete="off"
-            />
-            {fieldErrors.clue && (
-              <p className="text-signal text-xs">{fieldErrors.clue}</p>
-            )}
-            <Button type="submit" size="lg" disabled={!clue.trim()}>
-              Lock clue
-            </Button>
-            {you.myClue && (
-              <p className="text-center text-crew text-sm">Your clue is in</p>
-            )}
-          </form>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-4">
-          <PlayerList players={shared.players} youId={you.playerId} />
-        </CardContent>
-      </Card>
-      {you.isHost && (
-        <HostBar>
-          <Button variant="danger" onClick={onCancel}>
-            Reset round before reveal
-          </Button>
-        </HostBar>
-      )}
-    </>
-  );
-}
-
-function CluesRevealedView({ state }: { state: RoomStateResponse }) {
-  const { shared } = state;
   return (
     <Card>
       <CardHeader>
-        <CardTitle>All clues</CardTitle>
+        <CardTitle className="text-lg">Your clue</CardTitle>
       </CardHeader>
       <CardContent>
-        <ul className="stagger flex flex-col gap-2">
-          {(shared.clues || []).map((c) => (
-            <li
-              key={c.playerId}
-              className="rounded-2xl border border-ink-line bg-ink px-4 py-3 flex items-baseline justify-between gap-3"
-            >
-              <span className="text-sm text-ink-soft font-semibold shrink-0">{c.name}</span>
-              <span className="font-semibold text-right">{c.clue}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="text-xs text-ink-soft mt-3">
-          Discuss out loud, then the host opens the vote.
-        </p>
+        <p className="text-ink-soft text-sm mb-3">One to three words. Hidden until everyone is in.</p>
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit(clue);
+          }}
+        >
+          <Input
+            value={clue}
+            maxLength={LIMITS.CLUE_MAX}
+            onChange={(e) => setClue(e.target.value)}
+            placeholder="e.g. flickers softly"
+            autoComplete="off"
+          />
+          {fieldErrors.clue && <p className="text-signal text-xs">{fieldErrors.clue}</p>}
+          <Button type="submit" size="lg" disabled={!clue.trim()}>
+            {saved ? "Update clue" : "Lock clue"}
+          </Button>
+          {saved && <p className="text-center text-crew text-sm">Clue saved</p>}
+        </form>
       </CardContent>
     </Card>
   );
@@ -772,66 +849,58 @@ function CluesRevealedView({ state }: { state: RoomStateResponse }) {
 function VoteView({
   state,
   onVote,
-  onForce,
   fieldErrors,
 }: {
   state: RoomStateResponse;
-  onVote: (id: string) => void;
-  onForce: () => void;
+  onVote: (targetId: string) => void;
   fieldErrors: Record<string, string>;
+  onKick?: undefined;
 }) {
   const { shared, you } = state;
   const [selected, setSelected] = useState<string | null>(null);
   const voted = shared.players.find((p) => p.id === you.playerId)?.hasVoted ?? false;
+  const selectedName = shared.players.find((p) => p.id === selected)?.name;
 
-  return (
-    <>
+  if (voted) {
+    return (
       <Card>
-        <CardHeader>
-          <CardTitle>Vote out the impostor</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-ink-soft text-sm mb-3">
-            One vote. No self-votes. Revealed together when everyone is in.
+        <CardContent className="p-5 text-center">
+          <p className="text-crew font-semibold">Vote locked</p>
+          <p className="text-ink-soft text-sm mt-1">
+            Results reveal when everyone has voted.
           </p>
-          <PlayerList
-            players={shared.players}
-            youId={you.playerId}
-            selectedId={selected}
-            onSelect={setSelected}
-          />
-          {fieldErrors.targetId && (
-            <p className="text-signal text-xs mt-2">{fieldErrors.targetId}</p>
-          )}
-          {voted ? (
-            <p className="text-center text-crew text-sm font-semibold mt-4">
-              Vote locked
-            </p>
-          ) : (
-            <Button
-              size="lg"
-              className="w-full mt-4"
-              disabled={!selected}
-              onClick={() => selected && onVote(selected)}
-            >
-              Cast vote
-            </Button>
-          )}
-          {!voted && (
-            <p className="text-center text-xs text-ink-soft mt-2">
-              {shared.players.filter((p) => p.hasVoted).length}/{shared.activeCount} voted
-            </p>
-          )}
         </CardContent>
       </Card>
-      {you.isHost && (
-        <HostBar>
-          <Button variant="secondary" onClick={onForce}>
-            Reveal votes early
-          </Button>
-        </HostBar>
-      )}
-    </>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-lg">Who is the impostor?</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-ink-soft text-sm mb-3">Tap a player, then confirm. No self-votes.</p>
+        <PlayerList
+          players={shared.players}
+          youId={you.playerId}
+          phase={shared.phase}
+          selectedId={selected}
+          onSelect={setSelected}
+        />
+        {fieldErrors.targetId && (
+          <p className="text-signal text-xs mt-2">{fieldErrors.targetId}</p>
+        )}
+        <Button
+          size="lg"
+          className="w-full mt-4"
+          disabled={!selected}
+          onClick={() => selected && onVote(selected)}
+        >
+          {selectedName ? `Vote ${selectedName}` : "Pick a player"}
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -840,55 +909,66 @@ function ResultsView({ state }: { state: RoomStateResponse }) {
   const result = shared.result;
   const iWon =
     result &&
-    ((result.crewWin && !you.role?.impostor) ||
-      (!result.crewWin && you.role?.impostor));
+    ((result.crewWin && !you.role?.impostor) || (!result.crewWin && you.role?.impostor));
 
   return (
     <>
       <Card
         className={
           "reveal-in border-2 " +
-          (result?.crewWin ? "border-crew/50 bg-crew-soft/40" : "border-signal bg-signal-soft/40")
+          (result?.crewWin
+            ? "border-crew/60 bg-crew-soft/50"
+            : "border-signal bg-signal-soft/50")
         }
       >
         <CardHeader>
-          <p className="text-xs font-bold tracking-[0.18em] uppercase text-ink-soft">
-            {result?.crewWin ? "Crew wins" : result?.tie ? "Tie · impostor lives" : "Impostor wins"}
+          <p className="text-xs font-bold tracking-label uppercase text-ink-soft">
+            {result?.crewWin ? "Crew wins" : result?.tie ? "Tie — impostor survives" : "Impostor wins"}
           </p>
           <CardTitle className="text-2xl">
             {result?.impostorName} was the impostor
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {iWon !== null && iWon !== undefined && (
-            <p className="text-sm font-semibold mb-3">
+          {iWon !== undefined && (
+            <p className="text-sm font-semibold mb-4">
               {iWon ? "You won this round." : "You lost this round."}
             </p>
           )}
-          <ul className="flex flex-col gap-2">
-            {(shared.tally || []).map((t) => (
-              <li
-                key={t.targetId}
+          <div className="flex flex-col gap-2">
+            {(shared.tally ?? []).map((row) => (
+              <div
+                key={row.targetId}
                 className="flex items-center justify-between rounded-2xl border border-ink-line bg-ink px-4 py-3"
               >
-                <span className={t.targetId === result?.impostorId ? "text-signal font-bold" : ""}>
-                  {t.name}
-                  {t.targetId === result?.impostorId && " · impostor"}
+                <span className={row.targetId === result?.impostorId ? "text-signal font-bold" : ""}>
+                  {row.name}
                 </span>
-                <Badge tone={t.votes > 0 ? "signal" : "neutral"}>
-                  {t.votes} vote{t.votes === 1 ? "" : "s"}
+                <Badge tone={row.votes > 0 ? "signal" : "neutral"}>
+                  {row.votes} vote{row.votes === 1 ? "" : "s"}
                 </Badge>
-              </li>
+              </div>
             ))}
-          </ul>
-          {!you.role && (
-            <p className="text-xs text-ink-soft mt-3">
-              The secret word stays private to crew.
-            </p>
-          )}
+          </div>
         </CardContent>
       </Card>
-      <RoleCard you={you} phase={shared.phase} />
+      {shared.votesDetail && shared.votesDetail.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">How everyone voted</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="flex flex-col gap-1.5 text-sm">
+              {shared.votesDetail.map((vote) => (
+                <li key={vote.voterId} className="flex justify-between gap-3">
+                  <span className="text-ink-soft">{vote.voterName}</span>
+                  <span className="font-semibold">→ {vote.targetName}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
     </>
   );
 }
