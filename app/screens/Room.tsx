@@ -318,7 +318,7 @@ export default function Room({ roomId }: { roomId: string }) {
 
       <footer className="mt-6 text-center text-2xs text-ink-soft/70 pb-2 flex flex-col gap-2 items-center">
         <span>Disconnecting keeps your seat. Refresh to rejoin.</span>
-        {!you.isHost && joined && (
+        {!you.isHost && joined && (shared.phase === "LOBBY" || shared.phase === "SUBMITTING") && (
           <button
             type="button"
             onClick={switchPlayer}
