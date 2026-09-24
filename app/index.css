@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Syne", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --color-ink: #0c1017;
+  --color-ink-raised: #141a24;
+  --color-ink-line: #1f2733;
+  --color-ink-soft: #8b95a7;
+  --color-ink-text: #eef1f6;
+
+  --color-signal: #ff5a36;
+  --color-signal-deep: #d94422;
+  --color-signal-soft: #2a1510;
+  --color-crew: #3ecf8e;
+  --color-crew-soft: #0f241c;
+  --color-gold: #f0b429;
+
+  --radius-card: 1.25rem;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    font-family: var(--font-sans);
+    background:
+      radial-gradient(120% 80% at 50% -10%, #1a2233 0%, transparent 55%),
+      var(--color-ink);
+    color: var(--color-ink-text);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-gold);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  .app-shell {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    max-width: 32rem;
+    margin-inline: auto;
+    padding: 1rem 1rem calc(1.25rem + env(safe-area-inset-bottom));
+  }
+
+  .display {
+    font-family: var(--font-display);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+  }
+
+  .reveal-in {
+    animation: reveal-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .stagger > * {
+    animation: reveal-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .stagger > *:nth-child(1) { animation-delay: 0.04s; }
+  .stagger > *:nth-child(2) { animation-delay: 0.08s; }
+  .stagger > *:nth-child(3) { animation-delay: 0.12s; }
+  .stagger > *:nth-child(4) { animation-delay: 0.16s; }
+  .stagger > *:nth-child(5) { animation-delay: 0.2s; }
+  .stagger > *:nth-child(6) { animation-delay: 0.24s; }
+}
+
+@keyframes reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
